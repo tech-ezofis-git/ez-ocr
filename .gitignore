@@ -1,0 +1,31 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+
+# Local / secrets
+local.settings.json
+.env
+.env.*
+*.log
+
+# Large model caches (download via scripts; bake into Docker image)
+models/
+paddle_models/
+
+# IDE / tooling
+.vscode/
+.cursor/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.egg-info/

@@ -1,0 +1,10 @@
+# Fix: bake PaddleOCR models into existing OCR app image (v2 base)
+FROM arasuezofis/ocr-app:v2
+
+COPY paddle_models /home/site/wwwroot/paddle_models
+
+RUN test -f /home/site/wwwroot/paddle_models/det/inference.yml && \
+    test -f /home/site/wwwroot/paddle_models/rec/inference.yml && \
+    test -f /home/site/wwwroot/paddle_models/cls/inference.yml
+
+ENV PADDLE_MODELS_DIR=/home/site/wwwroot/paddle_models

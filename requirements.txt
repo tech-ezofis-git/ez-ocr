@@ -1,0 +1,13 @@
+azure-functions
+opencv-python-headless
+PyMuPDF
+numpy
+pypdfium2
+pytesseract
+Pillow
+paddleocr
+paddlepaddle
+surya-ocr
+playwright
+requests
+transformers<5
