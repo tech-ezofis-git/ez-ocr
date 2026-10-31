@@ -85,6 +85,12 @@ _TESSERACT_DPI = int(
     os.environ.get("TESSERACT_OCR_DPI", "200")
 )
 
+# A stuck tesseract process is killed after this many seconds so it cannot
+# block the request (and the calls queued behind it) forever.
+_TESSERACT_TIMEOUT_SECONDS = int(
+    os.environ.get("TESSERACT_TIMEOUT_SECONDS", "30")
+)
+
 pytesseract.pytesseract.tesseract_cmd = _TESSERACT_CMD
 
 if os.path.isdir(_TESSDATA_DIR):
@@ -615,7 +621,8 @@ def _tesseract_ocr_pil_image(img: Image.Image) -> str:
 
     return pytesseract.image_to_string(
         rgb,
-        lang=_TESSERACT_LANG
+        lang=_TESSERACT_LANG,
+        timeout=_TESSERACT_TIMEOUT_SECONDS,
     ).strip()
 
 

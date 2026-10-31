@@ -5,7 +5,8 @@ Findings from a read-only review on 2026-10-31. Live checks were made against th
 ## Problems found
 
 ### Live setup
-1. **Paddle model mismatch in production.** The live app sets `PADDLE_MODELS_DIR=/home/site/wwwroot/paddle_models`. That folder holds **PP-OCRv5** models (PaddleOCR 3.x format: `inference.json`/`inference.yml`, no `.pdmodel`), but the code uses **paddleocr 2.7.3**, which expects the 2.x models in `paddle/`. The `paddle` engine probably fails in production. Unknown – needs confirmation with a test request.
+1. **Two Paddle model sets.** The live app sets `PADDLE_MODELS_DIR=/home/site/wwwroot/paddle_models` (PP-OCRv5 files). A live test on 2026-10-31 showed Paddle **does work** with it, so it was not broken as first assumed. The `fix/remove-surya` image uses the 2.x models in `paddle/` instead; output on test files was the same.
+1a. **Tesseract calls sometimes hang in Azure (pre-existing).** Seen on 2026-10-31 on both the old and the new image: some calls get no response for 90 s+, and with several calls at once the new image stopped answering Tesseract entirely until restarted. Paddle and EML were not affected. Not reproducible locally (even pinned to 1 core). Root cause unknown – needs container logs / process list from inside the running replica. Defensive fix added on `fix/remove-surya`: `pytesseract.image_to_string(..., timeout=TESSERACT_TIMEOUT_SECONDS)` (default 30 s) kills a stuck process and returns 500 "Tesseract process timeout" instead of hanging. Tested locally with a fake stuck tesseract.
 2. ~~**Surya models are not in the image.**~~ Fixed on `fix/remove-surya`: Surya was removed.
 3. **Image is about 2 GB and carries two Paddle model sets** (`paddle/` 16 MB and `paddle_models/` 99 MB), plus a stray PDF that got copied in by `COPY . .`.
 
