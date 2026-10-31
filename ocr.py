@@ -5,14 +5,15 @@ import logging
 import os
 import re
 import sys
+import threading
 from statistics import median
 from typing import Any
 
 
 # =========================================================
 # ENVIRONMENT SETUP
-# (must run BEFORE importing surya / transformers / torch
-#  because those libraries read cache env vars at import time)
+# (must run BEFORE importing paddle / protobuf
+#  because those libraries read these env vars at import time)
 # =========================================================
 
 if "APP_PATH" in os.environ:
@@ -25,44 +26,30 @@ if "APP_PATH" in os.environ:
         sys.path.append(app_path)
 
 
-_MODELS_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "models"
-)
-
-os.makedirs(_MODELS_DIR, exist_ok=True)
-
-os.environ.setdefault("MODEL_CACHE_DIR", _MODELS_DIR)
-os.environ.setdefault("HF_HOME", os.path.join(_MODELS_DIR, "hf"))
-os.environ.setdefault("HF_HUB_CACHE", os.path.join(_MODELS_DIR, "hf", "hub"))
-os.environ.setdefault(
-    "TRANSFORMERS_CACHE",
-    os.path.join(_MODELS_DIR, "hf", "transformers"),
-)
-os.environ.setdefault("TORCH_HOME", os.path.join(_MODELS_DIR, "torch"))
-
 # Paddle on Windows can crash with oneDNN/MKLDNN or thread oversubscription.
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
 os.environ.setdefault("FLAGS_use_onednn", "0")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# Tesseract 4 asks OpenMP for several threads itself (OMP_NUM_THREADS does
+# not stop it). Parallel tesseract processes on a small CPU share then spin
+# against each other; the Tesseract docs recommend this limit for that case.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 # PaddleOCR 2.x + mixed protobuf installs need pure-Python protobuf.
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
-# Force scratch/temp downloads onto the project drive too.
-_PROJECT_TMP = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    ".tmp",
-)
-os.makedirs(_PROJECT_TMP, exist_ok=True)
-# Force temp onto the project drive — C: is frequently out of space.
-os.environ["TMP"] = _PROJECT_TMP
-os.environ["TEMP"] = _PROJECT_TMP
-os.environ.setdefault(
-    "HF_HOME",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hf"),
-)
+# Force temp onto the project drive on Windows dev machines — C: is
+# frequently out of space. Not on Linux: temp files inside wwwroot make the
+# Functions host see file changes and restart, aborting running requests.
+if os.name == "nt":
+    _PROJECT_TMP = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        ".tmp",
+    )
+    os.makedirs(_PROJECT_TMP, exist_ok=True)
+    os.environ["TMP"] = _PROJECT_TMP
+    os.environ["TEMP"] = _PROJECT_TMP
 os.environ.setdefault(
     "MODELSCOPE_CACHE",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), ".modelscope"),
@@ -102,6 +89,12 @@ _TESSERACT_DPI = int(
     os.environ.get("TESSERACT_OCR_DPI", "200")
 )
 
+# A stuck tesseract process is killed after this many seconds so it cannot
+# block the request (and the calls queued behind it) forever.
+_TESSERACT_TIMEOUT_SECONDS = int(
+    os.environ.get("TESSERACT_TIMEOUT_SECONDS", "30")
+)
+
 pytesseract.pytesseract.tesseract_cmd = _TESSERACT_CMD
 
 if os.path.isdir(_TESSDATA_DIR):
@@ -114,10 +107,12 @@ if os.path.isdir(_TESSDATA_DIR):
 
 logger = logging.getLogger(__name__)
 
-predictors = None
 _PADDLE_OCR_ENGINE = None
+# PaddleOCR is not thread-safe and the Functions host runs requests on a
+# thread pool, so engine creation and inference must not overlap.
+_PADDLE_LOCK = threading.Lock()
 
-OCR_ENGINES = frozenset({"surya", "tesseract", "paddle"})
+OCR_ENGINES = frozenset({"tesseract", "paddle"})
 
 _PADDLE_MODELS_DIR = os.environ.get(
     "PADDLE_MODELS_DIR",
@@ -143,19 +138,6 @@ _PADDLE_LAYOUT_MODE = "paddle-layout"
 _PDF_RENDER_DPI = float(
     os.environ.get("PDF_RENDER_DPI", str(_PADDLE_PDF_RENDER_SCALE * 72))
 )
-
-
-# =========================================================
-# SURYA MODEL LOADER
-# =========================================================
-
-def _ensure_predictors():
-    global predictors
-
-    if predictors is None:
-        from surya.models import load_predictors
-
-        predictors = load_predictors()
 
 
 # =========================================================
@@ -209,51 +191,8 @@ def pdf_bytes_to_page_images(
 
 
 # =========================================================
-# OCR HELPERS
+# LAYOUT HELPERS
 # =========================================================
-
-_SCRIPT_TAG_RE = re.compile(r"<SCRIPT-[A-Z]+>")
-_INLINE_TAG_RE = re.compile(r"</?[A-Za-z][^>\n]*>")
-
-
-def _strip_ocr_markup(text: str) -> str:
-    if not text:
-        return text
-
-    text = _SCRIPT_TAG_RE.sub("", text)
-    text = _INLINE_TAG_RE.sub("", text)
-
-    return text.strip()
-
-
-def _ocr_math_mode() -> bool:
-    v = os.environ.get(
-        "SURYA_OCR_MATH_MODE",
-        "true"
-    ).lower()
-
-    return v in ("1", "true", "yes")
-
-
-def _line_to_layout_entry(line) -> dict[str, Any] | None:
-    text = _strip_ocr_markup((line.text or "").strip())
-
-    if not text:
-        return None
-
-    left, top, right, bottom = [float(v) for v in line.bbox]
-
-    return {
-        "text": text,
-        "left": left,
-        "top": top,
-        "right": right,
-        "bottom": bottom,
-        "width": max(right - left, 1.0),
-        "height": max(bottom - top, 1.0),
-        "center_y": (top + bottom) / 2.0,
-    }
-
 
 def _estimate_layout_units(
     entries: list[dict[str, Any]]
@@ -403,65 +342,6 @@ def _layout_entries_to_text(entries: list[dict[str, Any]]) -> str:
         previous_bottom = row["bottom"]
 
     return "\n".join(rendered_lines).rstrip()
-
-
-def _ocr_result_to_layout_text(ocr_result) -> str:
-    entries = []
-
-    for line in ocr_result.text_lines:
-        entry = _line_to_layout_entry(line)
-
-        if entry is not None:
-            entries.append(entry)
-
-    return _layout_entries_to_text(entries)
-
-
-def run_ocr(img, highres_img):
-    from surya.common.surya.schema import TaskNames
-
-    _ensure_predictors()
-
-    result = predictors["recognition"](
-        [img],
-        task_names=[TaskNames.ocr_with_boxes],
-        det_predictor=predictors["detection"],
-        highres_images=[highres_img],
-        return_words=False,
-        math_mode=_ocr_math_mode(),
-        sort_lines=True,
-    )[0]
-
-    return result
-
-
-# =========================================================
-# SURYA TEXT EXTRACTION
-# =========================================================
-
-def pdf_bytes_to_layout_text(pdf_bytes: bytes, page_no: int = 1) -> str:
-    from surya.settings import settings
-
-    page_images = pdf_bytes_to_page_images(
-        pdf_bytes,
-        settings.IMAGE_DPI,
-        page_no=page_no,
-    )
-    highres_images = pdf_bytes_to_page_images(
-        pdf_bytes,
-        settings.IMAGE_DPI_HIGHRES,
-        page_no=page_no,
-    )
-
-    page_chunks = []
-
-    for img, hi in zip(page_images, highres_images):
-        ocr_result = run_ocr(img, hi)
-        page_chunks.append(
-            _ocr_result_to_layout_text(ocr_result)
-        )
-
-    return "\f\n".join(page_chunks) + "\n"
 
 
 # =========================================================
@@ -624,8 +504,9 @@ def _paddle_result_to_layout_text(pred_result) -> str:
 
 
 def _extract_page_with_paddle(image: Image.Image) -> str:
-    ocr = get_paddle_ocr_engine()
-    pred = _run_paddle_ocr(ocr, image)
+    with _PADDLE_LOCK:
+        ocr = get_paddle_ocr_engine()
+        pred = _run_paddle_ocr(ocr, image)
     return _paddle_result_to_layout_text(pred)
 
 
@@ -744,7 +625,8 @@ def _tesseract_ocr_pil_image(img: Image.Image) -> str:
 
     return pytesseract.image_to_string(
         rgb,
-        lang=_TESSERACT_LANG
+        lang=_TESSERACT_LANG,
+        timeout=_TESSERACT_TIMEOUT_SECONDS,
     ).strip()
 
 

@@ -14,6 +14,7 @@ local.settings.json
 
 # Large model caches (download via scripts; bake into Docker image)
 models/
+paddle/
 paddle_models/
 
 # IDE / tooling

@@ -64,4 +64,4 @@ If the source image is private, `az acr import` needs credentials. Easiest is to
 - **AzureWebJobsStorage** is required because the image runs the Azure Functions host.
 - First request after scale-from-zero can be slow (large OCR models).
 - Use **MinReplicas 1** in production for steadier latency.
-- Ensure **Surya models** are baked into the image (`python download_models.py` before `docker build`).
+- Ensure **PaddleOCR models** are baked into the image (`python download_paddle_models.py` before `docker build`).
