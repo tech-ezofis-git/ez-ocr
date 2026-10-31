@@ -1,11 +1,11 @@
 # Versions match the image that was live on 2026-10-31.
 # Playwright newer than 1.61 does not support Debian 11 (the base image).
 azure-functions==1.24.0
-opencv-contrib-python==4.6.0.66
+opencv-contrib-python==4.8.1.78
 numpy<2
 pypdfium2==4.30.0
 pytesseract==0.3.13
-Pillow==10.4.0
+Pillow==13.0.0
 # Install paddlepaddle from the official CPU index (not always on PyPI):
 #   pip install paddlepaddle==2.6.1 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
 paddlepaddle==2.6.1
