@@ -32,6 +32,10 @@ os.environ.setdefault("FLAGS_use_onednn", "0")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# Tesseract 4 asks OpenMP for several threads itself (OMP_NUM_THREADS does
+# not stop it). Parallel tesseract processes on a small CPU share then spin
+# against each other; the Tesseract docs recommend this limit for that case.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 # PaddleOCR 2.x + mixed protobuf installs need pure-Python protobuf.
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 

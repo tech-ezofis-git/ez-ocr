@@ -14,6 +14,7 @@
 - **Endpoints**: Azure Functions Python v2 decorators on one `app = func.FunctionApp(...)` in `function_app.py`. Auth level is `ANONYMOUS`.
 - **Lazy loading**: heavy OCR imports happen inside the handler; models are created once and cached in module globals.
 - **Thread safety**: requests run on a thread pool. Any shared model that is not thread-safe (PaddleOCR) must be used under a lock (`_PADDLE_LOCK`).
+- **External processes get a timeout** (`TESSERACT_TIMEOUT_SECONDS`) and run with `OMP_THREAD_LIMIT=1`, so a stuck or slow tesseract cannot block other requests.
 - **No writes inside the app folder** on Linux: the Functions host restarts when files in `/home/site/wwwroot` change. Use the system temp dir.
 - **Env setup before imports**: Paddle/protobuf flags are set with `os.environ.setdefault` at the top of `function_app.py` and `ocr.py`, before paddle is imported. Keep this order.
 - **Page numbers** are 1-based (`page_no`). One page per request.
