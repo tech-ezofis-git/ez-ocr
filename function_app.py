@@ -10,7 +10,7 @@ os.environ.setdefault("FLAGS_use_onednn", "0")
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
-OCR_ENGINES = {"surya", "tesseract", "paddle"}
+OCR_ENGINES = {"tesseract", "paddle"}
 
 
 @app.route(route="extract_text", methods=["POST"])
@@ -32,7 +32,7 @@ def ocr(req: func.HttpRequest) -> func.HttpResponse:
 
         if engine not in OCR_ENGINES:
             return func.HttpResponse(
-                "engine must be surya, tesseract, or paddle",
+                "engine must be tesseract or paddle",
                 status_code=400
             )
 
@@ -60,18 +60,7 @@ def ocr(req: func.HttpRequest) -> func.HttpResponse:
 
         layout_mode = engine
 
-        if engine == "surya":
-            if data[:5] != b"%PDF-":
-                return func.HttpResponse(
-                    "Surya requires PDF",
-                    status_code=400
-                )
-
-            from ocr import pdf_bytes_to_layout_text
-
-            text = pdf_bytes_to_layout_text(data, page_no=page_no)
-
-        elif engine == "tesseract":
+        if engine == "tesseract":
             from ocr import tesseract_extract_text_from_bytes
 
             text = tesseract_extract_text_from_bytes(data, page_no=page_no)

@@ -205,16 +205,8 @@ $envVarList = @(
     "PYTHON_ENABLE_WORKER_EXTENSIONS=1",
     "AzureWebJobsFeatureFlags=EnableWorkerIndexing",
     "WEBSITES_PORT=80",
-    "MODEL_CACHE_DIR=/home/site/wwwroot/models",
-    "HF_HOME=/home/site/wwwroot/models/hf",
-    "HF_HUB_CACHE=/home/site/wwwroot/models/hf/hub",
-    "TRANSFORMERS_CACHE=/home/site/wwwroot/models/hf/transformers",
-    "TORCH_HOME=/home/site/wwwroot/models/torch",
-    "PADDLE_MODELS_DIR=/home/site/wwwroot/paddle_models",
-    "TESSERACT_CMD=/usr/bin/tesseract",
-    "HF_HUB_OFFLINE=1",
-    "TRANSFORMERS_OFFLINE=1",
-    "HF_HUB_DISABLE_TELEMETRY=1"
+    "PADDLE_MODELS_DIR=/home/site/wwwroot/paddle",
+    "TESSERACT_CMD=/usr/bin/tesseract"
 )
 
 Write-Host "Creating container app $AppName ..."
@@ -274,7 +266,7 @@ Write-Host ""
 Write-Host "Deployment complete."
 Write-Host "URL: https://$fqdn"
 Write-Host "Health: https://$fqdn/api/health"
-Write-Host "OCR:    POST https://$fqdn/api/extract_text  (multipart: file, engine=surya|tesseract|paddle)"
+Write-Host "OCR:    POST https://$fqdn/api/extract_text  (multipart: file, engine=tesseract|paddle)"
 Write-Host "EML:    POST https://$fqdn/api/emltopdfconvert (multipart: file)"
 
 Write-Host ""

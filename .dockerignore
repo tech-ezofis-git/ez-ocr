@@ -22,3 +22,8 @@ build
 .paddlex_cache
 paddle_models
 *.zip
+*.pdf
+models
+docs
+CLAUDE.md
+azure
