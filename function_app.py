@@ -1,6 +1,12 @@
 import azure.functions as func
 import logging
+import os
 from urllib.parse import parse_qs
+
+# Must be set before Paddle/protobuf import inside handlers.
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_use_onednn", "0")
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -16,6 +22,7 @@ def ocr(req: func.HttpRequest) -> func.HttpResponse:
 
         uploaded_file = files.get("file")
         engine = form.get("engine", "").strip().lower()
+        raw_page_no = (form.get("page_no") or "1").strip() or "1"
 
         if uploaded_file is None:
             return func.HttpResponse(
@@ -29,6 +36,20 @@ def ocr(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
 
+        try:
+            page_no = int(raw_page_no)
+        except ValueError:
+            return func.HttpResponse(
+                "page_no must be an integer",
+                status_code=400
+            )
+
+        if page_no < 1:
+            return func.HttpResponse(
+                "page_no must be >= 1",
+                status_code=400
+            )
+
         data = uploaded_file.stream.read()
 
         if not data:
@@ -37,11 +58,7 @@ def ocr(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
 
-        from ocr import (
-            extract_text_with_paddle,
-            pdf_bytes_to_layout_text,
-            tesseract_extract_text_from_bytes,
-        )
+        layout_mode = engine
 
         if engine == "surya":
             if data[:5] != b"%PDF-":
@@ -50,20 +67,32 @@ def ocr(req: func.HttpRequest) -> func.HttpResponse:
                     status_code=400
                 )
 
-            text = pdf_bytes_to_layout_text(data)
+            from ocr import pdf_bytes_to_layout_text
+
+            text = pdf_bytes_to_layout_text(data, page_no=page_no)
 
         elif engine == "tesseract":
-            text = tesseract_extract_text_from_bytes(data)
+            from ocr import tesseract_extract_text_from_bytes
+
+            text = tesseract_extract_text_from_bytes(data, page_no=page_no)
         else:
+            from ocr import extract_text_with_paddle, _PADDLE_LAYOUT_MODE
+
             text = extract_text_with_paddle(
                 data,
-                uploaded_file.filename or ""
+                uploaded_file.filename or "",
+                page_no=page_no,
             )
+            layout_mode = _PADDLE_LAYOUT_MODE
 
         return func.HttpResponse(
             text,
-            mimetype="text/plain",
-            status_code=200
+            mimetype="text/plain; charset=utf-8",
+            status_code=200,
+            headers={
+                "X-OCR-Layout-Mode": layout_mode,
+                "X-OCR-Page-No": str(page_no),
+            },
         )
 
     except Exception as e:

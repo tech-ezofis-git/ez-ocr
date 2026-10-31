@@ -41,19 +41,39 @@ os.environ.setdefault(
 )
 os.environ.setdefault("TORCH_HOME", os.path.join(_MODELS_DIR, "torch"))
 
+# Paddle on Windows can crash with oneDNN/MKLDNN or thread oversubscription.
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_use_onednn", "0")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# PaddleOCR 2.x + mixed protobuf installs need pure-Python protobuf.
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
-import cv2
-import fitz
+# Force scratch/temp downloads onto the project drive too.
+_PROJECT_TMP = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".tmp",
+)
+os.makedirs(_PROJECT_TMP, exist_ok=True)
+# Force temp onto the project drive — C: is frequently out of space.
+os.environ["TMP"] = _PROJECT_TMP
+os.environ["TEMP"] = _PROJECT_TMP
+os.environ.setdefault(
+    "HF_HOME",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hf"),
+)
+os.environ.setdefault(
+    "MODELSCOPE_CACHE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".modelscope"),
+)
+
+
 import numpy as np
 import pypdfium2
 import pytesseract
 
 from PIL import Image
-
-from surya.common.surya.schema import TaskNames
-from surya.common.util import rescale_bbox
-from surya.models import load_predictors
-from surya.settings import settings
 
 
 _DEFAULT_TESSERACT_HOME = r"C:\Program Files\Tesseract-OCR"
@@ -103,7 +123,7 @@ _PADDLE_MODELS_DIR = os.environ.get(
     "PADDLE_MODELS_DIR",
     os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "paddle_models"
+        "paddle"
     )
 )
 
@@ -111,7 +131,17 @@ _PADDLE_DET_MODEL_DIR = os.path.join(_PADDLE_MODELS_DIR, "det")
 _PADDLE_REC_MODEL_DIR = os.path.join(_PADDLE_MODELS_DIR, "rec")
 _PADDLE_CLS_MODEL_DIR = os.path.join(_PADDLE_MODELS_DIR, "cls")
 _PADDLE_PDF_RENDER_SCALE = float(
-    os.environ.get("PADDLE_PDF_RENDER_SCALE", "3")
+    os.environ.get("PADDLE_PDF_RENDER_SCALE", "2.0")
+)
+
+_PADDLE_OCR_MAX_SIDE = int(
+    os.environ.get("PADDLE_OCR_MAX_SIDE", "1600")
+)
+
+_PADDLE_LAYOUT_MODE = "paddle-layout"
+
+_PDF_RENDER_DPI = float(
+    os.environ.get("PDF_RENDER_DPI", str(_PADDLE_PDF_RENDER_SCALE * 72))
 )
 
 
@@ -123,6 +153,8 @@ def _ensure_predictors():
     global predictors
 
     if predictors is None:
+        from surya.models import load_predictors
+
         predictors = load_predictors()
 
 
@@ -134,20 +166,46 @@ def open_pdf(pdf_bytes):
     return pypdfium2.PdfDocument(io.BytesIO(pdf_bytes))
 
 
-def render_page(pdf_bytes, page_index, dpi):
+def pdf_bytes_to_page_images(
+    pdf_bytes: bytes,
+    dpi: float | None = None,
+    page_no: int | None = None,
+) -> list[Image.Image]:
+    """Render PDF page(s) to PIL RGB images.
+
+    page_no is 1-based. When set, only that page is rendered.
+    When None, every page is rendered.
+    """
+    if not pdf_bytes:
+        raise ValueError("PDF bytes are empty.")
+
+    render_dpi = _PDF_RENDER_DPI if dpi is None else dpi
     doc = open_pdf(pdf_bytes)
 
-    renderer = doc.render(
-        pypdfium2.PdfBitmap.to_pil,
-        page_indices=[page_index],
-        scale=dpi / 72,
-    )
+    try:
+        page_count = len(doc)
 
-    img = list(renderer)[0].convert("RGB")
+        if page_no is not None:
+            if page_no < 1 or page_no > page_count:
+                raise ValueError(
+                    f"page_no {page_no} is out of range "
+                    f"(document has {page_count} page(s))"
+                )
 
-    doc.close()
+            page = doc[page_no - 1]
+            try:
+                bitmap = page.render(scale=render_dpi / 72)
+                return [bitmap.to_pil().convert("RGB")]
+            finally:
+                page.close()
 
-    return img
+        renderer = doc.render(
+            pypdfium2.PdfBitmap.to_pil,
+            scale=render_dpi / 72,
+        )
+        return [img.convert("RGB") for img in renderer]
+    finally:
+        doc.close()
 
 
 # =========================================================
@@ -215,9 +273,10 @@ def _estimate_layout_units(
         if glyph_count > 0:
             glyph_widths.append(entry["width"] / glyph_count)
 
-    fallback_glyph_width = max(content_width / 120.0, 5.0)
+    fallback_glyph_width = max(content_width / 100.0, 4.0)
     glyph_width = median(glyph_widths) if glyph_widths else fallback_glyph_width
-    glyph_width = min(max(glyph_width, 4.0), max(content_width / 20.0, 8.0))
+    # Keep glyph width tight so multi-column x positions stay separated.
+    glyph_width = min(max(glyph_width, 3.5), max(content_width / 40.0, 6.0))
 
     return line_height, glyph_width, left_edge
 
@@ -244,10 +303,10 @@ def _group_entries_into_rows(
     line_height: float,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    row_threshold = max(line_height * 0.60, 8.0)
+    row_threshold = max(line_height * 0.55, 8.0)
 
     for entry in sorted(entries, key=lambda item: (item["top"], item["left"])):
-        for row in reversed(rows):
+        for row in reversed(rows[-8:]):
             if _same_layout_row(entry, row, row_threshold):
                 row["entries"].append(entry)
                 row["top"] = min(row["top"], entry["top"])
@@ -286,6 +345,8 @@ def _render_layout_row(
 ) -> str:
     rendered = ""
     visual_end_col = 0
+    # Large horizontal gaps → treat as separate columns with extra padding.
+    column_gap_cols = max(4, int(round(18.0 / glyph_width)))
 
     for idx, entry in enumerate(row["entries"]):
         target_col = max(
@@ -295,7 +356,16 @@ def _render_layout_row(
         current_len = len(rendered)
 
         if idx > 0:
-            target_col = max(target_col, current_len + 1, visual_end_col)
+            prev = row["entries"][idx - 1]
+            gap_px = entry["left"] - prev["right"]
+            if gap_px > glyph_width * 8:
+                target_col = max(
+                    target_col,
+                    current_len + column_gap_cols,
+                    visual_end_col + column_gap_cols,
+                )
+            else:
+                target_col = max(target_col, current_len + 1, visual_end_col)
 
         if target_col > current_len:
             rendered += " " * (target_col - current_len)
@@ -348,6 +418,8 @@ def _ocr_result_to_layout_text(ocr_result) -> str:
 
 
 def run_ocr(img, highres_img):
+    from surya.common.surya.schema import TaskNames
+
     _ensure_predictors()
 
     result = predictors["recognition"](
@@ -367,29 +439,23 @@ def run_ocr(img, highres_img):
 # SURYA TEXT EXTRACTION
 # =========================================================
 
-def pdf_bytes_to_layout_text(pdf_bytes: bytes) -> str:
-    doc = open_pdf(pdf_bytes)
+def pdf_bytes_to_layout_text(pdf_bytes: bytes, page_no: int = 1) -> str:
+    from surya.settings import settings
 
-    page_count = len(doc)
-
-    doc.close()
+    page_images = pdf_bytes_to_page_images(
+        pdf_bytes,
+        settings.IMAGE_DPI,
+        page_no=page_no,
+    )
+    highres_images = pdf_bytes_to_page_images(
+        pdf_bytes,
+        settings.IMAGE_DPI_HIGHRES,
+        page_no=page_no,
+    )
 
     page_chunks = []
 
-    for page_index in range(page_count):
-
-        img = render_page(
-            pdf_bytes,
-            page_index,
-            settings.IMAGE_DPI
-        )
-
-        hi = render_page(
-            pdf_bytes,
-            page_index,
-            settings.IMAGE_DPI_HIGHRES
-        )
-
+    for img, hi in zip(page_images, highres_images):
         ocr_result = run_ocr(img, hi)
         page_chunks.append(
             _ocr_result_to_layout_text(ocr_result)
@@ -399,7 +465,7 @@ def pdf_bytes_to_layout_text(pdf_bytes: bytes) -> str:
 
 
 # =========================================================
-# PADDLE OCR HELPERS
+# PADDLE OCR HELPERS (paddleocr 2.7.x / paddlepaddle 2.6.x)
 # =========================================================
 
 def _ensure_paddle_model_dirs():
@@ -416,49 +482,78 @@ def _ensure_paddle_model_dirs():
         raise FileNotFoundError(
             "Missing PaddleOCR model directories: "
             + ", ".join(missing)
+            + ". Run: python download_paddle_models.py"
         )
+
+
+def _configure_paddle_runtime():
+    os.environ.setdefault("FLAGS_use_mkldnn", "0")
+    os.environ.setdefault("FLAGS_use_onednn", "0")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+
+
+def _prepare_image_for_paddle(image: Image.Image) -> Image.Image:
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    longest = max(width, height)
+
+    if longest <= _PADDLE_OCR_MAX_SIDE:
+        return rgb
+
+    scale = _PADDLE_OCR_MAX_SIDE / longest
+    resized = rgb.resize(
+        (max(1, int(width * scale)), max(1, int(height * scale))),
+        Image.LANCZOS,
+    )
+
+    logger.info(
+        "Downscaled Paddle OCR input from %sx%s to %sx%s",
+        width,
+        height,
+        resized.size[0],
+        resized.size[1],
+    )
+
+    return resized
+
+
+def _image_to_paddle_array(image: Image.Image) -> np.ndarray:
+    prepared = _prepare_image_for_paddle(image)
+    return np.ascontiguousarray(np.array(prepared, dtype=np.uint8))
 
 
 def get_paddle_ocr_engine():
     global _PADDLE_OCR_ENGINE
 
     if _PADDLE_OCR_ENGINE is None:
+        _configure_paddle_runtime()
         _ensure_paddle_model_dirs()
 
         from paddleocr import PaddleOCR
 
-        try:
-            _PADDLE_OCR_ENGINE = PaddleOCR(
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=True,
-                enable_mkldnn=False,
-                text_detection_model_name="PP-OCRv5_server_det",
-                text_detection_model_dir=_PADDLE_DET_MODEL_DIR,
-                text_recognition_model_name="en_PP-OCRv5_mobile_rec",
-                text_recognition_model_dir=_PADDLE_REC_MODEL_DIR,
-                textline_orientation_model_name="PP-LCNet_x1_0_textline_ori",
-                textline_orientation_model_dir=_PADDLE_CLS_MODEL_DIR,
-            )
-        except (TypeError, ValueError):
-            _PADDLE_OCR_ENGINE = PaddleOCR(
-                use_angle_cls=True,
-                lang="en",
-                det_model_dir=_PADDLE_DET_MODEL_DIR,
-                rec_model_dir=_PADDLE_REC_MODEL_DIR,
-                cls_model_dir=_PADDLE_CLS_MODEL_DIR,
-            )
+        _PADDLE_OCR_ENGINE = PaddleOCR(
+            use_angle_cls=True,
+            lang="en",
+            use_gpu=False,
+            show_log=False,
+            det_model_dir=_PADDLE_DET_MODEL_DIR,
+            rec_model_dir=_PADDLE_REC_MODEL_DIR,
+            cls_model_dir=_PADDLE_CLS_MODEL_DIR,
+        )
+
+        logger.info(
+            "Initialized PaddleOCR 2.x from %s",
+            _PADDLE_MODELS_DIR,
+        )
 
     return _PADDLE_OCR_ENGINE
 
 
 def _run_paddle_ocr(ocr, image: Image.Image):
-    arr = np.array(image.convert("RGB"))
-
-    if hasattr(ocr, "predict"):
-        return ocr.predict(arr)
-
-    return ocr.ocr(arr)
+    arr = _image_to_paddle_array(image)
+    # PaddleOCR 2.x: ocr.ocr(img, cls=True) -> list of pages of [box, (text, score)]
+    return ocr.ocr(arr, cls=True)
 
 
 def _paddle_box_to_layout_entry(
@@ -496,36 +591,8 @@ def _paddle_box_to_layout_entry(
     }
 
 
-def _fitz_word_to_layout_entry(word) -> dict[str, Any] | None:
-    try:
-        left, top, right, bottom, text = word[:5]
-    except Exception:
-        return None
-
-    return _paddle_box_to_layout_entry(
-        str(text),
-        [left, top, right, bottom]
-    )
-
-
-def _pdf_page_embedded_layout_text(page) -> str:
-    try:
-        words = page.get_text("words")
-    except Exception:
-        return ""
-
-    entries = []
-
-    for word in words:
-        entry = _fitz_word_to_layout_entry(word)
-
-        if entry is not None:
-            entries.append(entry)
-
-    return _layout_entries_to_text(entries)
-
-
 def _paddle_result_to_layout_text(pred_result) -> str:
+    """Rebuild spaced plaintext from PaddleOCR 2.x box results."""
     entries = []
     fallback_lines = []
 
@@ -533,30 +600,13 @@ def _paddle_result_to_layout_text(pred_result) -> str:
         return ""
 
     for block in pred_result:
-        if hasattr(block, "get"):
-            rec_texts = block.get("rec_texts") or []
-            boxes = block.get("rec_boxes")
-
-            if boxes is None:
-                boxes = block.get("rec_polys")
-
-            if boxes is not None:
-                for text, box in zip(rec_texts, boxes):
-                    entry = _paddle_box_to_layout_entry(text, box)
-
-                    if entry is not None:
-                        entries.append(entry)
-
-            fallback_lines.extend(str(text) for text in rec_texts if text)
-            continue
-
         if not block:
             continue
 
         for line in block:
             try:
-                text = line[1][0]
                 box = line[0]
+                text = line[1][0]
             except Exception:
                 continue
 
@@ -573,40 +623,33 @@ def _paddle_result_to_layout_text(pred_result) -> str:
     return "\n".join(fallback_lines).strip()
 
 
-def _extract_text_lines_from_paddle_result(pred_result):
-    lines = []
-
-    if not pred_result:
-        return lines
-
-    for block in pred_result:
-        rec_texts = None
-
-        if hasattr(block, "get"):
-            rec_texts = block.get("rec_texts")
-
-        if rec_texts:
-            lines.extend(str(text) for text in rec_texts if text)
-            continue
-
-        if not block:
-            continue
-
-        for line in block:
-            try:
-                text = line[1][0]
-
-                if text:
-                    lines.append(str(text))
-            except Exception:
-                continue
-
-    return lines
+def _extract_page_with_paddle(image: Image.Image) -> str:
+    ocr = get_paddle_ocr_engine()
+    pred = _run_paddle_ocr(ocr, image)
+    return _paddle_result_to_layout_text(pred)
 
 
-def extract_text_with_paddle(file_bytes: bytes, filename: str) -> str:
+def extract_text_with_paddle(
+    file_bytes: bytes,
+    filename: str,
+    page_no: int = 1,
+) -> str:
     if not file_bytes:
         raise ValueError("File bytes are empty.")
+
+    if page_no < 1:
+        raise ValueError("page_no must be >= 1")
+
+    logger.info(
+        "Paddle extract start layout_mode=%s render_scale=%s max_side=%s "
+        "page_no=%s file=%s models=%s",
+        _PADDLE_LAYOUT_MODE,
+        _PADDLE_PDF_RENDER_SCALE,
+        _PADDLE_OCR_MAX_SIDE,
+        page_no,
+        filename,
+        _PADDLE_MODELS_DIR,
+    )
 
     ext = (os.path.splitext(filename)[1] or "").lower()
     kind = _detect_file_kind(file_bytes)
@@ -632,54 +675,43 @@ def extract_text_with_paddle(file_bytes: bytes, filename: str) -> str:
 
     if ext == ".pdf":
         try:
-            pdf_document = fitz.open(
-                stream=file_bytes,
-                filetype="pdf"
+            page_images = pdf_bytes_to_page_images(
+                file_bytes,
+                _PADDLE_PDF_RENDER_SCALE * 72,
+                page_no=page_no,
             )
         except Exception as exc:
-            raise Exception(f"Failed to open PDF: {exc}") from exc
+            raise Exception(f"Failed to render PDF pages: {exc}") from exc
 
-        try:
-            for page_number, page in enumerate(pdf_document):
-                try:
-                    embedded_text = _pdf_page_embedded_layout_text(page)
+        last_error = None
+        for image in page_images:
+            try:
+                logger.info("Paddle OCR page_no=%s", page_no)
+                page_chunks.append(_extract_page_with_paddle(image))
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Paddle OCR failed on PDF page %s: %s",
+                    page_no,
+                    exc,
+                )
+                continue
 
-                    if embedded_text:
-                        page_chunks.append(embedded_text)
-                        continue
-
-                    ocr = get_paddle_ocr_engine()
-                    matrix = fitz.Matrix(
-                        _PADDLE_PDF_RENDER_SCALE,
-                        _PADDLE_PDF_RENDER_SCALE,
-                    )
-                    pix = page.get_pixmap(matrix=matrix)
-                    img_bytes = pix.tobytes("png")
-                    image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-
-                    pred = _run_paddle_ocr(ocr, image)
-                    page_chunks.append(
-                        _paddle_result_to_layout_text(pred)
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Paddle OCR failed on PDF page %s: %s",
-                        page_number + 1,
-                        exc,
-                    )
-                    continue
-        finally:
-            pdf_document.close()
+        if not page_chunks and last_error is not None:
+            raise Exception(
+                f"Paddle OCR failed on page {page_no}: {last_error}"
+            ) from last_error
     else:
+        if page_no != 1:
+            raise ValueError("page_no must be 1 for image files")
+
         try:
             image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
         except Exception as exc:
             raise Exception(f"Failed to load image: {exc}") from exc
 
         try:
-            ocr = get_paddle_ocr_engine()
-            pred = _run_paddle_ocr(ocr, image)
-            page_chunks.append(_paddle_result_to_layout_text(pred))
+            page_chunks.append(_extract_page_with_paddle(image))
         except Exception as exc:
             raise Exception(f"OCR failed on image: {exc}") from exc
 
@@ -735,36 +767,31 @@ def _detect_file_kind(data: bytes) -> str:
 # =========================================================
 
 def tesseract_extract_text_from_bytes(
-    data: bytes
+    data: bytes,
+    page_no: int = 1,
 ) -> str:
+    if page_no < 1:
+        raise ValueError("page_no must be >= 1")
 
     kind = _detect_file_kind(data)
 
     if kind == "pdf":
+        page_images = pdf_bytes_to_page_images(
+            data,
+            _TESSERACT_DPI,
+            page_no=page_no,
+        )
 
-        doc = open_pdf(data)
-
-        page_count = len(doc)
-
-        doc.close()
-
-        page_chunks = []
-
-        for page_index in range(page_count):
-
-            img = render_page(
-                data,
-                page_index,
-                _TESSERACT_DPI
-            )
-
-            page_chunks.append(
-                _tesseract_ocr_pil_image(img)
-            )
+        page_chunks = [
+            _tesseract_ocr_pil_image(img)
+            for img in page_images
+        ]
 
         return "\f\n".join(page_chunks) + "\n"
 
     if kind == "image":
+        if page_no != 1:
+            raise ValueError("page_no must be 1 for image files")
 
         img = Image.open(io.BytesIO(data))
 
