@@ -48,12 +48,20 @@ COPY requirements.txt .
 # PYTHON DEPENDENCIES
 # =========================================================
 
+# paddlepaddle==2.6.1 is not reliably on PyPI — install from Paddle CPU index,
+# then install the rest of requirements without re-resolving paddlepaddle.
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir \
         --index-url https://pypi.org/simple \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         "torch==2.7.1+cpu" && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir "numpy<2" && \
+    pip install --no-cache-dir "paddlepaddle==2.6.1" \
+        -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ && \
+    grep -v -E '^[[:space:]]*paddlepaddle==' requirements.txt \
+        > /tmp/requirements.docker.txt && \
+    pip install --no-cache-dir -r /tmp/requirements.docker.txt && \
+    pip install --no-cache-dir "protobuf<=3.20.2"
 
 # =========================================================
 # PLAYWRIGHT
@@ -69,7 +77,8 @@ ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
     HF_HUB_CACHE=/home/site/wwwroot/models/hf/hub \
     TRANSFORMERS_CACHE=/home/site/wwwroot/models/hf/transformers \
     TORCH_HOME=/home/site/wwwroot/models/torch \
-    PADDLE_MODELS_DIR=/home/site/wwwroot/paddle_models \
+    PADDLE_MODELS_DIR=/home/site/wwwroot/paddle \
+    PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python \
     TESSERACT_CMD=/usr/bin/tesseract \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
@@ -78,9 +87,9 @@ ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
 
 COPY . .
 
-RUN test -f /home/site/wwwroot/paddle_models/det/inference.yml && \
-    test -f /home/site/wwwroot/paddle_models/rec/inference.yml && \
-    test -f /home/site/wwwroot/paddle_models/cls/inference.yml
+RUN test -d /home/site/wwwroot/paddle/det && \
+    test -d /home/site/wwwroot/paddle/rec && \
+    test -d /home/site/wwwroot/paddle/cls
 
 # =========================================================
 # EXPOSE
