@@ -33,7 +33,7 @@ No database. Azure Functions needs `AzureWebJobsStorage` (an Azure Storage accou
 
 ## Hosting
 - **Azure Container Apps** (region South India).
-- Live settings (read 2026-10-31): 4 CPU, 8 GiB, 1–3 replicas, TCP probes on port 80.
-- Image registry in use: `ghcr.io/tech-ezofis-git/ez-ocr`. An Azure Container Registry is also configured.
+- Live settings (since 2026-10-31): 1 vCPU, 2 GiB, 1–3 replicas, single-revision mode, TCP probes on port 80. Was 4 vCPU / 8 GiB with Surya.
+- Image registry in use: `ghcr.io/tech-ezofis-git/ez-ocr` (tags `no-surya-<commit>`). The old Azure Container Registry entry was removed (the registry no longer existed and blocked updates).
 - Older images came from Docker Hub `arasuezofis/ocr-app` (see [azure/deploy-container-app.ps1](../../azure/deploy-container-app.ps1)).
 - CI/CD: none in this repo. How the GHCR image is built and pushed: Unknown – needs confirmation.
