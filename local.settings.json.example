@@ -3,7 +3,10 @@
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing"
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
+    "FLAGS_use_mkldnn": "0",
+    "FLAGS_use_onednn": "0"
   },
   "ConnectionStrings": {}
 }

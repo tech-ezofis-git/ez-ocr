@@ -1,12 +1,13 @@
 azure-functions
-opencv-python-headless
-PyMuPDF
-numpy
+opencv-contrib-python==4.6.0.66
+numpy<2
 pypdfium2
 pytesseract
 Pillow
-paddleocr
-paddlepaddle
+# Install paddlepaddle from the official CPU index (not always on PyPI):
+#   pip install paddlepaddle==2.6.1 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+paddlepaddle==2.6.1
+paddleocr==2.7.3
 surya-ocr
 playwright
 requests

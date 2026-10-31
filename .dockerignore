@@ -16,3 +16,9 @@ build
 *.log
 .vscode
 .cursor
+.tmp
+.hf
+.modelscope
+.paddlex_cache
+paddle_models
+*.zip
