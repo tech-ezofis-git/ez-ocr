@@ -13,7 +13,7 @@ Findings from a read-only review on 2026-10-31. Live checks were made against th
 ### Security
 4. **No authentication.** `http_auth_level=ANONYMOUS` and external ingress: anyone with the URL can use the API.
 5. **No upload size limit.** Large files or big PDFs can use all memory/CPU.
-6. **EML → PDF renders untrusted HTML in Chromium with `--no-sandbox`.** Remote images/scripts in emails can be loaded (external requests from the server). Consider blocking network requests and JavaScript in Playwright.
+6. **EML → PDF renders untrusted HTML in Chromium with `--no-sandbox`.** Fixed on `fix/pdfium-lock-eml-hardening`: three layers stop emails from making the server fetch remote or internal URLs (SSRF): a CSP `<meta>` as the first element of `<head>` (`_EML_CSP`), JavaScript off with every non-`data:` request aborted (`_allow_only_data_urls`), and Chromium on a dead proxy (`_EML_BROWSER_ARGS`), because `<link rel=prefetch>` bypasses `page.route()`. A 16-vector hostile email made 30 requests on the old image and 0 with all layers. `--no-sandbox` is still used.
 7. **Error messages are returned to callers** (`OCR failed: <exception>`, `str(e)`), which can leak internal paths.
 
 ### Build and code
@@ -23,13 +23,16 @@ Findings from a read-only review on 2026-10-31. Live checks were made against th
 11. **`Dockerfile.paddle-fix`** builds on old `arasuezofis/ocr-app:v2` and the old `paddle_models` layout – likely obsolete.
 12. **`azure/deploy-container-app.ps1` is out of date** vs the live app (image source, CPU/memory, `PADDLE_MODELS_DIR`). Running it as-is would downgrade resources and point at a Docker Hub image.
 13. **Tesseract `_detect_file_kind`** only recognises PDF/PNG/JPEG; TIFF/BMP/WEBP fail with tesseract but work with paddle.
-14. **Windows-only defaults** in `ocr.py` (Tesseract path, `TMP`/`TEMP` forced to `.tmp`).
+14. **Windows-only defaults** in `ocr.py` (Tesseract path). The forced `.tmp` temp folder inside the app folder was replaced by the optional `OCR_TMP_DIR` setting (it made the Functions host restart).
 15. **`requests`** is installed but not used.
 
 ### Fixed on `fix/remove-surya` (found while load-testing)
 - **Simultaneous Paddle calls failed** ("index out of bounds", model errors): PaddleOCR is not thread-safe and the Functions host runs requests on a thread pool. Now guarded by `_PADDLE_LOCK` in `ocr.py`.
 - **Host restarted after OCR calls**, aborting in-flight requests ("Worker channel is shutting down"): `ocr.py` pointed TMP/TEMP into `wwwroot/.tmp`, and the host watches that folder. The redirect now only applies on Windows.
 - **Unpinned packages broke the build** (Playwright 1.64 dropped Debian 11). Versions are now pinned to the live image's.
+
+### Fixed on `fix/pdfium-lock-eml-hardening` (found on the Windows server test)
+- **Parallel PDF calls crashed the worker** (`OSError: access violation` in `FPDF_RenderPageBitmap`, then heap corruption; every in-flight request failed). PDFium is not thread-safe, even across documents. All rendering in `pdf_bytes_to_page_images` now runs under `_PDFIUM_LOCK`. Seen on Windows with 8 parallel calls; the Linux container has the same code.
 
 ### Tests and process
 16. **No tests, no linter, no CI.** The deployed code was not in git until PR #1 (`chore/sync-deployed-code`).
