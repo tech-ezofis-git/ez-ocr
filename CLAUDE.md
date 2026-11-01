@@ -30,7 +30,8 @@ Test / lint: none configured. Full setup in docs/ai/SETUP_AND_COMMANDS.md; Windo
 - Keep the Paddle pins together: `paddlepaddle==2.6.1`, `paddleocr==2.7.3`, `numpy<2`, `protobuf<=3.20.2`, `opencv-contrib-python==4.6.0.66`.
 - Surya OCR was removed on purpose (not needed, and it made the app very costly). Don't add it, torch or transformers back without asking.
 - Set environment variables (`FLAGS_use_mkldnn`, protobuf mode) **before** importing paddle.
-- Keep heavy imports inside handlers (lazy loading); cache models in module globals. Use PaddleOCR only under `_PADDLE_LOCK` (not thread-safe).
+- Keep heavy imports inside handlers (lazy loading); cache models in module globals. Use PaddleOCR only under `_PADDLE_LOCK` and pypdfium2 only under `_PDFIUM_LOCK` (neither is thread-safe).
+- EML → PDF renders untrusted HTML: keep JavaScript off and block every request except `data:` URLs.
 - Never write files inside the app folder at runtime (`/home/site/wwwroot` in the container, the app folder on Windows) — the Functions host restarts on file changes. Use `OCR_TMP_DIR` or the system temp.
 - Keep library versions pinned in `requirements.txt`; unpinned upgrades have broken the build before.
 - Bad input → 400 with a short plain-text message. Log unexpected errors with `logging.exception`.

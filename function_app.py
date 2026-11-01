@@ -262,13 +262,23 @@ def attachment_pdf_name(filename: str | None) -> str:
     return f"{stem}.pdf"
 
 
+async def _allow_only_data_urls(route) -> None:
+    # Email HTML is untrusted: it must not make the server fetch anything
+    # (remote trackers, or internal sites reachable from this host).
+    if route.request.url.startswith("data:"):
+        await route.continue_()
+    else:
+        await route.abort()
+
+
 async def html_to_pdf_bytes(html: str) -> bytes:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             args=["--no-sandbox", "--disable-dev-shm-usage"]
         )
         try:
-            page = await browser.new_page()
+            page = await browser.new_page(java_script_enabled=False)
+            await page.route("**/*", _allow_only_data_urls)
             await page.set_content(html, wait_until="load")
             return await page.pdf(format="A4", print_background=True)
         finally:
@@ -303,4 +313,5 @@ async def convert(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
         )
     except Exception as e:
+        logging.exception("EML to PDF failed")
         return func.HttpResponse(body=str(e), status_code=500)

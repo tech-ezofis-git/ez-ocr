@@ -108,6 +108,9 @@ _PADDLE_OCR_ENGINE = None
 # PaddleOCR is not thread-safe and the Functions host runs requests on a
 # thread pool, so engine creation and inference must not overlap.
 _PADDLE_LOCK = threading.Lock()
+# PDFium (pypdfium2) must never run in two threads at once, even on different
+# documents: parallel renders crashed the worker with heap corruption.
+_PDFIUM_LOCK = threading.Lock()
 
 OCR_ENGINES = frozenset({"tesseract", "paddle"})
 
@@ -159,32 +162,36 @@ def pdf_bytes_to_page_images(
         raise ValueError("PDF bytes are empty.")
 
     render_dpi = _PDF_RENDER_DPI if dpi is None else dpi
-    doc = open_pdf(pdf_bytes)
 
-    try:
-        page_count = len(doc)
+    # The returned images are independent copies (.convert), so nothing that
+    # PDFium owns is used after the lock is released.
+    with _PDFIUM_LOCK:
+        doc = open_pdf(pdf_bytes)
 
-        if page_no is not None:
-            if page_no < 1 or page_no > page_count:
-                raise ValueError(
-                    f"page_no {page_no} is out of range "
-                    f"(document has {page_count} page(s))"
-                )
+        try:
+            page_count = len(doc)
 
-            page = doc[page_no - 1]
-            try:
-                bitmap = page.render(scale=render_dpi / 72)
-                return [bitmap.to_pil().convert("RGB")]
-            finally:
-                page.close()
+            if page_no is not None:
+                if page_no < 1 or page_no > page_count:
+                    raise ValueError(
+                        f"page_no {page_no} is out of range "
+                        f"(document has {page_count} page(s))"
+                    )
 
-        renderer = doc.render(
-            pypdfium2.PdfBitmap.to_pil,
-            scale=render_dpi / 72,
-        )
-        return [img.convert("RGB") for img in renderer]
-    finally:
-        doc.close()
+                page = doc[page_no - 1]
+                try:
+                    bitmap = page.render(scale=render_dpi / 72)
+                    return [bitmap.to_pil().convert("RGB")]
+                finally:
+                    page.close()
+
+            renderer = doc.render(
+                pypdfium2.PdfBitmap.to_pil,
+                scale=render_dpi / 72,
+            )
+            return [img.convert("RGB") for img in renderer]
+        finally:
+            doc.close()
 
 
 # =========================================================
