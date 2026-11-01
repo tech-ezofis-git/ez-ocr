@@ -13,7 +13,7 @@ Findings from a read-only review on 2026-10-31. Live checks were made against th
 ### Security
 4. **No authentication.** `http_auth_level=ANONYMOUS` and external ingress: anyone with the URL can use the API.
 5. **No upload size limit.** Large files or big PDFs can use all memory/CPU.
-6. **EML → PDF renders untrusted HTML in Chromium with `--no-sandbox`.** Fixed on `fix/pdfium-lock-eml-hardening`: JavaScript is off and every request except `data:` URLs is blocked (`_allow_only_data_urls`), so emails cannot make the server fetch remote or internal URLs (SSRF). `--no-sandbox` is still used.
+6. **EML → PDF renders untrusted HTML in Chromium with `--no-sandbox`.** Fixed on `fix/pdfium-lock-eml-hardening`: three layers stop emails from making the server fetch remote or internal URLs (SSRF): a CSP `<meta>` as the first element of `<head>` (`_EML_CSP`), JavaScript off with every non-`data:` request aborted (`_allow_only_data_urls`), and Chromium on a dead proxy (`_EML_BROWSER_ARGS`), because `<link rel=prefetch>` bypasses `page.route()`. A 16-vector hostile email made 30 requests on the old image and 0 with all layers. `--no-sandbox` is still used.
 7. **Error messages are returned to callers** (`OCR failed: <exception>`, `str(e)`), which can leak internal paths.
 
 ### Build and code

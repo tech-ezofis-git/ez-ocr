@@ -136,6 +136,8 @@ nssm start ezocr
 ```
 Log rotation matters on servers with little free disk. Port 7071 stays closed to the outside.
 
+**After every code update, restart the service** (`nssm restart ezocr`): the Functions host notices file changes but can keep the old Python worker with the old code loaded.
+
 ## 9. Publish through IIS (changes IIS – do it in a quiet window)
 1. URL Rewrite and Application Request Routing (ARR) must be installed; in ARR server settings enable the proxy and set the timeout to 120 s.
 2. Create a **new site** bound only to the new host name (for example `ocr.<domain>`) with an HTTPS certificate. Do not edit existing sites.

@@ -230,6 +230,7 @@ def parse_eml_bytes(eml_bytes: bytes) -> str:
     return f"""
     <html>
     <head>
+        <meta http-equiv="Content-Security-Policy" content="{_EML_CSP}">
         <meta charset="utf-8">
         <style>
             body {{
@@ -262,6 +263,24 @@ def attachment_pdf_name(filename: str | None) -> str:
     return f"{stem}.pdf"
 
 
+# Layers that keep untrusted email HTML from making the server fetch anything:
+# 1. CSP as the first element of <head>; email HTML comes later and cannot
+#    loosen it.
+# 2. JavaScript off, and page.route() aborts every non-data: request.
+# 3. Chromium uses a dead proxy (port 9), also for loopback, so requests that
+#    bypass page.route() (e.g. <link rel=prefetch>) go nowhere.
+_EML_CSP = (
+    "default-src 'none'; img-src data:; "
+    "style-src 'unsafe-inline'; font-src data:"
+)
+_EML_BROWSER_ARGS = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--proxy-server=http://127.0.0.1:9",
+    "--proxy-bypass-list=<-loopback>",
+]
+
+
 async def _allow_only_data_urls(route) -> None:
     # Email HTML is untrusted: it must not make the server fetch anything
     # (remote trackers, or internal sites reachable from this host).
@@ -274,7 +293,7 @@ async def _allow_only_data_urls(route) -> None:
 async def html_to_pdf_bytes(html: str) -> bytes:
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
+            args=_EML_BROWSER_ARGS
         )
         try:
             page = await browser.new_page(java_script_enabled=False)
