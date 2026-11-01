@@ -23,7 +23,7 @@ Findings from a read-only review on 2026-10-31. Live checks were made against th
 11. **`Dockerfile.paddle-fix`** builds on old `arasuezofis/ocr-app:v2` and the old `paddle_models` layout – likely obsolete.
 12. **`azure/deploy-container-app.ps1` is out of date** vs the live app (image source, CPU/memory, `PADDLE_MODELS_DIR`). Running it as-is would downgrade resources and point at a Docker Hub image.
 13. **Tesseract `_detect_file_kind`** only recognises PDF/PNG/JPEG; TIFF/BMP/WEBP fail with tesseract but work with paddle.
-14. **Windows-only defaults** in `ocr.py` (Tesseract path, `TMP`/`TEMP` forced to `.tmp`).
+14. **Windows-only defaults** in `ocr.py` (Tesseract path). The forced `.tmp` temp folder inside the app folder was replaced by the optional `OCR_TMP_DIR` setting (it made the Functions host restart).
 15. **`requests`** is installed but not used.
 
 ### Fixed on `fix/remove-surya` (found while load-testing)

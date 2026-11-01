@@ -39,17 +39,14 @@ os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 # PaddleOCR 2.x + mixed protobuf installs need pure-Python protobuf.
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
-# Force temp onto the project drive on Windows dev machines — C: is
-# frequently out of space. Not on Linux: temp files inside wwwroot make the
-# Functions host see file changes and restart, aborting running requests.
-if os.name == "nt":
-    _PROJECT_TMP = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        ".tmp",
-    )
-    os.makedirs(_PROJECT_TMP, exist_ok=True)
-    os.environ["TMP"] = _PROJECT_TMP
-    os.environ["TEMP"] = _PROJECT_TMP
+# Optional: move temp files to another drive (e.g. when C: is full) by
+# setting OCR_TMP_DIR. Never point it inside the app folder — the Functions
+# host watches that folder and restarts on file changes, aborting requests.
+_OCR_TMP_DIR = os.environ.get("OCR_TMP_DIR")
+if _OCR_TMP_DIR:
+    os.makedirs(_OCR_TMP_DIR, exist_ok=True)
+    os.environ["TMP"] = _OCR_TMP_DIR
+    os.environ["TEMP"] = _OCR_TMP_DIR
 os.environ.setdefault(
     "MODELSCOPE_CACHE",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), ".modelscope"),
