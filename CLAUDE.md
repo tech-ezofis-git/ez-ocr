@@ -33,7 +33,8 @@ Test / lint: none configured. Full setup in docs/ai/SETUP_AND_COMMANDS.md; Windo
 - Keep heavy imports inside handlers (lazy loading); cache models in module globals. Use PaddleOCR only under `_PADDLE_LOCK` and pypdfium2 only under `_PDFIUM_LOCK` (neither is thread-safe).
 - EML → PDF renders untrusted HTML: keep all three layers (CSP meta first in `<head>`, JavaScript off + only `data:` requests allowed, Chromium on a dead proxy). Test changes with a hostile email that tries many fetch types, including `<link rel=prefetch>`.
 - Never write files inside the app folder at runtime (`/home/site/wwwroot` in the container, the app folder on Windows) — the Functions host restarts on file changes. Use `OCR_TMP_DIR` or the system temp.
-- Keep library versions pinned in `requirements.txt`; unpinned upgrades have broken the build before.
+- Keep library versions pinned in `requirements.txt`; unpinned upgrades have broken the build before. `opencv-contrib-python` must stay `<= 4.6.0.66` (required by paddleocr 2.7.3). Don't merge automated dependency PRs for the OCR stack without the regression tests; `.github/dependabot.yml` ignores those libraries.
+- On the Windows server, the service must force the venv's Python with `languageWorkers:python:defaultExecutablePath` (colon form) in its environment; otherwise a restart can pick another Python and every call returns 404.
 - Bad input → 400 with a short plain-text message. Log unexpected errors with `logging.exception`.
 - The live app's settings differ from `azure/deploy-container-app.ps1`; don't run the script against production without checking.
 

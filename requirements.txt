@@ -1,7 +1,9 @@
 # Versions match the image that was live on 2026-10-31.
 # Playwright newer than 1.61 does not support Debian 11 (the base image).
+# opencv-contrib-python must stay <= 4.6.0.66: paddleocr 2.7.3 requires it.
+# Pillow 13.0.0 was tested against 10.4.0 (byte-identical OCR output).
 azure-functions==1.24.0
-opencv-contrib-python==4.8.1.78
+opencv-contrib-python==4.6.0.66
 numpy<2
 pypdfium2==4.30.0
 pytesseract==0.3.13

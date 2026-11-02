@@ -21,10 +21,10 @@ Surya OCR, torch and transformers were removed on branch `fix/remove-surya` (202
 | paddleocr | `==2.7.3` | 2.7.3 | `paddle` engine |
 | protobuf | `<=3.20.2` in Dockerfile | 3.20.2 | Paddle needs old protobuf |
 | numpy | `<2` | 1.26.4 | images / Paddle |
-| opencv-contrib-python | `==4.6.0.66` | 4.6.0.66 (expected) | Paddle |
+| opencv-contrib-python | `==4.6.0.66` (max allowed by paddleocr 2.7.3) | 4.6.0.66 | Paddle |
 | pypdfium2 | `==4.30.0` | 4.30.0 | render PDF pages to images |
 | pytesseract | `==0.3.13` | 0.3.13 | `tesseract` engine |
-| Pillow | `==10.4.0` | 10.4.0 | images |
+| Pillow | `==13.0.0` (security update; tested byte-identical to 10.4.0) | 10.4.0 (servers not yet switched) | images |
 | playwright | `==1.61.0` | 1.61.0 | EML → PDF |
 | requests | `==2.34.2` | 2.34.2 | Not used in code – needs confirmation |
 
