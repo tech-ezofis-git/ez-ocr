@@ -39,17 +39,14 @@ os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 # PaddleOCR 2.x + mixed protobuf installs need pure-Python protobuf.
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
-# Force temp onto the project drive on Windows dev machines — C: is
-# frequently out of space. Not on Linux: temp files inside wwwroot make the
-# Functions host see file changes and restart, aborting running requests.
-if os.name == "nt":
-    _PROJECT_TMP = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        ".tmp",
-    )
-    os.makedirs(_PROJECT_TMP, exist_ok=True)
-    os.environ["TMP"] = _PROJECT_TMP
-    os.environ["TEMP"] = _PROJECT_TMP
+# Optional: move temp files to another drive (e.g. when C: is full) by
+# setting OCR_TMP_DIR. Never point it inside the app folder — the Functions
+# host watches that folder and restarts on file changes, aborting requests.
+_OCR_TMP_DIR = os.environ.get("OCR_TMP_DIR")
+if _OCR_TMP_DIR:
+    os.makedirs(_OCR_TMP_DIR, exist_ok=True)
+    os.environ["TMP"] = _OCR_TMP_DIR
+    os.environ["TEMP"] = _OCR_TMP_DIR
 os.environ.setdefault(
     "MODELSCOPE_CACHE",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), ".modelscope"),
@@ -111,6 +108,9 @@ _PADDLE_OCR_ENGINE = None
 # PaddleOCR is not thread-safe and the Functions host runs requests on a
 # thread pool, so engine creation and inference must not overlap.
 _PADDLE_LOCK = threading.Lock()
+# PDFium (pypdfium2) must never run in two threads at once, even on different
+# documents: parallel renders crashed the worker with heap corruption.
+_PDFIUM_LOCK = threading.Lock()
 
 OCR_ENGINES = frozenset({"tesseract", "paddle"})
 
@@ -162,32 +162,36 @@ def pdf_bytes_to_page_images(
         raise ValueError("PDF bytes are empty.")
 
     render_dpi = _PDF_RENDER_DPI if dpi is None else dpi
-    doc = open_pdf(pdf_bytes)
 
-    try:
-        page_count = len(doc)
+    # The returned images are independent copies (.convert), so nothing that
+    # PDFium owns is used after the lock is released.
+    with _PDFIUM_LOCK:
+        doc = open_pdf(pdf_bytes)
 
-        if page_no is not None:
-            if page_no < 1 or page_no > page_count:
-                raise ValueError(
-                    f"page_no {page_no} is out of range "
-                    f"(document has {page_count} page(s))"
-                )
+        try:
+            page_count = len(doc)
 
-            page = doc[page_no - 1]
-            try:
-                bitmap = page.render(scale=render_dpi / 72)
-                return [bitmap.to_pil().convert("RGB")]
-            finally:
-                page.close()
+            if page_no is not None:
+                if page_no < 1 or page_no > page_count:
+                    raise ValueError(
+                        f"page_no {page_no} is out of range "
+                        f"(document has {page_count} page(s))"
+                    )
 
-        renderer = doc.render(
-            pypdfium2.PdfBitmap.to_pil,
-            scale=render_dpi / 72,
-        )
-        return [img.convert("RGB") for img in renderer]
-    finally:
-        doc.close()
+                page = doc[page_no - 1]
+                try:
+                    bitmap = page.render(scale=render_dpi / 72)
+                    return [bitmap.to_pil().convert("RGB")]
+                finally:
+                    page.close()
+
+            renderer = doc.render(
+                pypdfium2.PdfBitmap.to_pil,
+                scale=render_dpi / 72,
+            )
+            return [img.convert("RGB") for img in renderer]
+        finally:
+            doc.close()
 
 
 # =========================================================

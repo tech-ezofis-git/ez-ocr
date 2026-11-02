@@ -1,5 +1,7 @@
 # Setup and commands
 
+For running on a Windows **server** without Docker (service + IIS), see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
+
 ## Local run (Windows)
 Needs Python 3.11, [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local), Tesseract installed at `C:\Program Files\Tesseract-OCR`, and Azurite (or a storage connection string).
 

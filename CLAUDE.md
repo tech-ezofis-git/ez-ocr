@@ -15,7 +15,7 @@ func start
 # build image
 docker build -t ez-ocr .
 ```
-Test / lint: none configured. Full setup in docs/ai/SETUP_AND_COMMANDS.md.
+Test / lint: none configured. Full setup in docs/ai/SETUP_AND_COMMANDS.md; Windows server without Docker in docs/ai/WINDOWS_SETUP.md.
 
 ## Endpoints
 - `GET /api/health`
@@ -30,8 +30,9 @@ Test / lint: none configured. Full setup in docs/ai/SETUP_AND_COMMANDS.md.
 - Keep the Paddle pins together: `paddlepaddle==2.6.1`, `paddleocr==2.7.3`, `numpy<2`, `protobuf<=3.20.2`, `opencv-contrib-python==4.6.0.66`.
 - Surya OCR was removed on purpose (not needed, and it made the app very costly). Don't add it, torch or transformers back without asking.
 - Set environment variables (`FLAGS_use_mkldnn`, protobuf mode) **before** importing paddle.
-- Keep heavy imports inside handlers (lazy loading); cache models in module globals. Use PaddleOCR only under `_PADDLE_LOCK` (not thread-safe).
-- Never write files inside `/home/site/wwwroot` at runtime on Linux — the Functions host restarts on file changes.
+- Keep heavy imports inside handlers (lazy loading); cache models in module globals. Use PaddleOCR only under `_PADDLE_LOCK` and pypdfium2 only under `_PDFIUM_LOCK` (neither is thread-safe).
+- EML → PDF renders untrusted HTML: keep all three layers (CSP meta first in `<head>`, JavaScript off + only `data:` requests allowed, Chromium on a dead proxy). Test changes with a hostile email that tries many fetch types, including `<link rel=prefetch>`.
+- Never write files inside the app folder at runtime (`/home/site/wwwroot` in the container, the app folder on Windows) — the Functions host restarts on file changes. Use `OCR_TMP_DIR` or the system temp.
 - Keep library versions pinned in `requirements.txt`; unpinned upgrades have broken the build before.
 - Bad input → 400 with a short plain-text message. Log unexpected errors with `logging.exception`.
 - The live app's settings differ from `azure/deploy-container-app.ps1`; don't run the script against production without checking.
@@ -43,3 +44,4 @@ Test / lint: none configured. Full setup in docs/ai/SETUP_AND_COMMANDS.md.
 @docs/ai/SETUP_AND_COMMANDS.md
 @docs/ai/CONVENTIONS.md
 @docs/ai/UPGRADE_NOTES.md
+@docs/ai/WINDOWS_SETUP.md

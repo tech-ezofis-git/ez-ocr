@@ -46,4 +46,5 @@ The Paddle model is loaded once per process and kept in the global `_PADDLE_OCR_
 | `TESSERACT_CMD`, `TESSERACT_HOME`, `TESSERACT_TESSDATA_DIR` | Windows path `C:\Program Files\Tesseract-OCR` | `ocr.py` |
 | `TESSERACT_OCR_LANG` / `TESSERACT_OCR_DPI` | `eng` / `200` | `ocr.py` |
 | `TESSERACT_TIMEOUT_SECONDS` | `30` – a stuck tesseract process is killed and the call returns 500 | `ocr.py` |
+| `OCR_TMP_DIR` | – (system temp) | `ocr.py`; optional temp folder, must be outside the app folder |
 | `APP_PATH` | – | `ocr.py` (changes working dir) |
