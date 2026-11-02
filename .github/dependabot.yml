@@ -1,0 +1,21 @@
+# Dependabot: keep security updates, but never touch the pinned OCR stack.
+# - paddleocr 2.7.3 needs opencv <= 4.6.0.66, numpy < 2 and old protobuf.
+# - Playwright newer than 1.61 does not support Debian 11 (the container base).
+# open-pull-requests-limit 0 turns off routine version-update PRs; the ignore
+# list also applies to security-update PRs.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "paddlepaddle"
+      - dependency-name: "paddleocr"
+      - dependency-name: "opencv-contrib-python"
+      - dependency-name: "opencv-python"
+      - dependency-name: "opencv-python-headless"
+      - dependency-name: "numpy"
+      - dependency-name: "protobuf"
+      - dependency-name: "playwright"

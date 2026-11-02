@@ -112,7 +112,7 @@ C:\ezocr\func\func.exe --version
   "ConnectionStrings": {}
 }
 ```
-- `languageWorkers__python__defaultExecutablePath` is **required**. Without it the host may start another Python found on the machine, even when the venv is first on PATH. The worker then fails with `No module named 'playwright'`.
+- `languageWorkers__python__defaultExecutablePath` is useful but **not sufficient** on its own: Core Tools may still start another Python found on the machine. The worker then fails with `No module named 'playwright'`. Also set the colon form `languageWorkers:python:defaultExecutablePath` in the **process environment** (service XML in step 10a, or `${env:...}` for a foreground test, step 12).
 - `OCR_TMP_DIR` must be **outside** `C:\ezocr\app`, and `PYTHONDONTWRITEBYTECODE=1` stops `__pycache__` being written there. The Functions host restarts when files in the app folder change.
 - `PLAYWRIGHT_BROWSERS_PATH` lets the service account find Chromium.
 
@@ -226,6 +226,8 @@ Why WinSW and not NSSM:
   <workingdirectory>C:\ezocr\app</workingdirectory>
 
   <env name="PATH" value="C:\ezocr\venv\Scripts;C:\ezocr\func;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0" />
+  <!-- REQUIRED: forces the venv's Python. Without it Core Tools may pick another Python (e.g. via the py launcher). -->
+  <env name="languageWorkers:python:defaultExecutablePath" value="C:\ezocr\venv\Scripts\python.exe" />
   <env name="FUNCTIONS_CORE_TOOLS_TELEMETRY_OPTOUT" value="1" />
 
   <startmode>Automatic</startmode>
@@ -252,6 +254,7 @@ Why WinSW and not NSSM:
   - `logs\service\ezocr-service.out.log` and `.err.log` are rolled at 10 MB, keeping 8 each.
   - `ezocr-service.wrapper.log` has only start/stop lines and is **not** rolled by WinSW 2.x. It grows by a few hundred bytes per start.
 - PATH is set only for the service process; machine and user PATH stay unchanged.
+- **`languageWorkers:python:defaultExecutablePath` (colon form) is required** in the service environment. Core Tools chooses the Python interpreter with its own probe, and the result is **not stable**: on a server that also has a system Python (and the `py` launcher), a restart can pick that Python even with the venv first on PATH and the double-underscore setting in `local.settings.json`. The worker then fails on `import playwright`, no functions are indexed, and **every call returns 404**. Check after each start: the log shows `Found Python version 3.11.9 (C:\ezocr\venv\Scripts\python.exe)`.
 
 ### 10b. Install, set the account, start
 ```powershell
@@ -302,6 +305,11 @@ Expected side effects, all harmless:
 ### 10d. Operating it
 - **After every code or settings update, restart the service** (`Restart-Service ezocr`). The Functions host notices file changes but can keep the old Python worker with the old code loaded.
 - Update the code: `git -C C:\ezocr\app pull` (elevated), then `Restart-Service ezocr`, then the tests from 10c.
+- Update a Python package: **stop → install → start**, not install → restart. The running worker keeps the packages' `.pyd` files open, so they can't be replaced while it runs.
+  1. Download the exact wheel first, check its SHA-256 against PyPI, and also keep the **current** version's wheel for rollback.
+  2. Test the new version in a **copy of the venv** on another port (see step 12) before touching the service.
+  3. In a quiet moment: `Stop-Service ezocr`, `pip install --no-deps --no-index <wheel>`, `pip check`, `Start-Service ezocr`, then the tests from 10c. If anything fails, install the old wheel the same way.
+- Never take library upgrades for the pinned OCR stack (Paddle, OpenCV, numpy, protobuf, Playwright) from automated PRs without the tests above; see `.github/dependabot.yml`.
 - Status: `Get-Service ezocr` or `C:\ezocr\tools\ezocr-service.exe status`. Logs: `C:\ezocr\logs\service`.
 - Port 7071 stays closed to the outside; no firewall rule is needed for it.
 
@@ -354,9 +362,11 @@ Get-ChildItem Cert:\LocalMachine\My, Cert:\LocalMachine\WebHosting | Select-Obje
 Stop the service first (`Stop-Service ezocr`) if it exists, since only one host can use port 7071.
 ```powershell
 Set-Location C:\ezocr\app
+${env:languageWorkers:python:defaultExecutablePath} = 'C:\ezocr\venv\Scripts\python.exe'   # same reason as in the service XML
 C:\ezocr\func\func.exe start --port 7071
 ```
 `func` listens on **127.0.0.1:7071 only**. Test from a second window as in 10c.
+To test another venv (e.g. a package upgrade) without stopping the service, use a copy of the code and venv and another port (`--port 7072`), with this variable pointing at that venv's `python.exe`.
 - Use **synthetic** test files; send the same files to the current production endpoint and compare the text.
 - Run **8 and 16 calls at once** with PDFs. This found the PDFium thread-safety bug, now fixed with `_PDFIUM_LOCK`.
   - With the PDFium and Paddle locks, 16 parallel PDF calls take about 8 s at the client, far below the 120 s ARR timeout.
